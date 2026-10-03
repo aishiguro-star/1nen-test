@@ -118,6 +118,11 @@ button:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px soli
 .stat{font-size:.8rem;color:var(--sub);background:var(--card);border:1.5px solid var(--line);border-radius:8px;padding:2px 8px}
 .notice{background:color-mix(in srgb,var(--ng) 10%,var(--card));border:2px solid var(--ng);border-radius:12px;padding:12px;margin-top:14px;font-size:.92rem}
 .hidden{display:none !important}
+.rvBadge{display:inline-block;margin-top:6px;background:rgba(255,255,255,.25);border-radius:999px;padding:0 10px;font-size:.78rem;font-weight:700}
+.rvTerms{display:grid;gap:4px;margin-bottom:4px}
+.rvRow{display:flex;justify-content:space-between;padding:6px 10px;border-radius:8px;background:var(--paper)}
+.rvRow.cur{outline:2px solid var(--accent)}
+.rvLeft{display:inline-block;font-size:.75rem;font-weight:700;color:var(--ng);margin-left:4px}
 .pad{margin:4px 0 14px;border:2px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
 .pad[data-pad="ans"]{border-color:var(--accent)}
 .padBar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);flex-wrap:wrap}
@@ -351,6 +356,18 @@ const S={screen:"home",subj:null,term:guessTerm(),count:50,qs:[],idx:0,res:[]};
 function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 
+/* ===== 復習リスト（教科・テスト時期ごと／復習で2回正解したら消える） ===== */
+const RKEY="chu1-review", RV_CLEAR=2;
+function rvAll(){return load(RKEY,{})}
+function rvList(sid,t){return rvAll()[sid+"-"+t]||[]}
+function rvSave(sid,t,l){const a=rvAll();if(l.length)a[sid+"-"+t]=l;else delete a[sid+"-"+t];save(RKEY,a)}
+function rvAdd(sid,t,q){const l=rvList(sid,t);const i=l.findIndex(x=>x.q.q===q.q);
+  if(i>=0)l[i].c=0;else l.push({q:{t:"w",u:q.u,q:q.q,a:q.a,e:q.e,un:q.un||"",k:q.k},c:0});rvSave(sid,t,l)}
+function rvMark(sid,t,qq,ok){const l=rvList(sid,t);const i=l.findIndex(x=>x.q.q===qq);if(i<0)return null;
+  if(ok){l[i].c++;if(l[i].c>=RV_CLEAR){l.splice(i,1);rvSave(sid,t,l);return "cleared"}}rvSave(sid,t,l);return l[i].c}
+function rvLeft(sid,t,qq){const x=rvList(sid,t).find(x=>x.q.q===qq);return x?RV_CLEAR-x.c:null}
+function rvCountSubj(sid){const a=rvAll();let n=0;for(const k in a)if(k.startsWith(sid+"-"))n+=a[k].length;return n}
+
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -386,6 +403,7 @@ function renderHome(){
         return `<button class="subj ${i===4?"wide":""}" style="--c:${s.color}" data-s="${s.id}">
           <div class="k">${s.name}</div>
           <div class="s">${available(s,S.term)?(r&&r.n?`この時期 ${r.n}問・正答率 ${Math.round(r.ok/r.n*100)}%`:"まだ解いていません"):"この時期の問題は準備中"}</div>
+          ${rvCountSubj(s.id)?`<div class="rvBadge">復習 ${rvCountSubj(s.id)}問</div>`:""}
         </button>`}).join("")}
     </div>`;
   app.querySelectorAll(".subj").forEach(b=>b.onclick=()=>{S.subj=SUBJECTS.find(s=>s.id===b.dataset.s);S.screen="setup";render();});
@@ -406,14 +424,27 @@ function renderSetup(){
       <h2>問題数</h2>
       <div class="seg" id="cnt">${[10,25,50].map(n=>`<button aria-pressed="${n===S.count}" data-n="${n}">${n}問</button>`).join("")}</div>
     </div>
-    <button class="btn" id="go" ${ok?"":"disabled"}>スタート</button>`;
+    <button class="btn" id="go" ${ok?"":"disabled"}>スタート</button>
+    <div class="panel">
+      <h2>まちがえた問題の復習</h2>
+      <div class="rvTerms">${TERMS.filter(t=>t.id>=3).map(t=>`<div class="rvRow${t.id===S.term?" cur":""}"><span>${t.name}</span><b>${rvList(s.id,t.id).length}問</b></div>`).join("")}</div>
+      <button class="btn ghost" id="rv" ${rvList(s.id,S.term).length?"":"disabled"}>${termName(S.term)}の復習をする（${rvList(s.id,S.term).length}問）</button>
+      <p class="hint">まちがえた問題は自動でここにたまります。復習で${RV_CLEAR}回正解すると、リストから消えます。</p>
+    </div>`;
   document.getElementById("bk").onclick=()=>{S.subj=null;S.screen="home";render();};
   app.querySelectorAll("#terms button").forEach(b=>b.onclick=()=>{S.term=+b.dataset.t;renderSetup();});
   app.querySelectorAll("#cnt button").forEach(b=>b.onclick=()=>{S.count=+b.dataset.n;renderSetup();});
   document.getElementById("go").onclick=start;
+  document.getElementById("rv").onclick=startReview;
 }
 
+function startReview(){
+  const l=rvList(S.subj.id,S.term); if(!l.length) return;
+  S.mode="review"; S.qs=shuffle(l.map(x=>x.q)).slice(0,50).map(prep); S.idx=0; S.res=[];
+  S.pad={ans:{idx:-1,data:null},memo:{idx:-1,data:null}}; S.screen="quiz"; render();
+}
 function start(){
+  S.mode="normal";
   const s=S.subj;
   let qs = s.gen ? MATH.make(S.term,S.count) : shuffle(pool(s.id,S.term)).slice(0,S.count);
   S.qs=qs.map(prep); S.idx=0; S.res=[]; S.pad={ans:{idx:-1,data:null},memo:{idx:-1,data:null}}; S.screen="quiz"; render();
@@ -480,10 +511,10 @@ function renderQuiz(){
   const unit=q.un&&/^[\d.\-−]+$/.test(q.a[0])?" "+q.un.replace("cm3","cm³").replace("hz","Hz"):"";
   const alts=q.a.slice(1);
   app.innerHTML=`
-    <div class="progress"><span>${S.subj.name}・${termName(S.term)}</span><span>${S.idx+1} / ${n}</span></div>
+    <div class="progress"><span>${S.mode==="review"?"【復習】":""}${S.subj.name}・${termName(S.term)}</span><span>${S.idx+1} / ${n}</span></div>
     <div class="bar"><i style="width:${S.idx/n*100}%"></i></div>
     <div class="panel top">
-      <span class="unitTag">${esc(q.u)}</span>
+      <span class="unitTag">${esc(q.u)}</span>${S.mode==="review"&&!shown&&rvLeft(S.subj.id,S.term,q.q)!==null?` <span class="rvLeft">あと${rvLeft(S.subj.id,S.term,q.q)}回正解で復習リストから消えます</span>`:""}
       <p class="q">${esc(q.q)}</p>
       ${useMemo?padHTML("memo","計算メモ",240):""}
       ${padHTML("ans","答えを書く",170)}
@@ -512,7 +543,10 @@ function renderQuiz(){
       const g=document.querySelector(".answerBox"); if(g) g.scrollIntoView({behavior:"smooth",block:"start"});
     };
   }else{
-    const go=ok=>{S.res[S.idx].ok=ok; if(S.idx+1<n){S.idx++;render();}else finish();};
+    const go=ok=>{S.res[S.idx].ok=ok;
+      if(S.mode==="review") S.res[S.idx].rv=rvMark(S.subj.id,S.term,q.q,ok);
+      else if(!ok) rvAdd(S.subj.id,S.term,q);
+      if(S.idx+1<n){S.idx++;render();}else finish();};
     document.getElementById("ok").onclick=()=>go(true);
     document.getElementById("ng").onclick=()=>go(false);
   }
@@ -525,6 +559,7 @@ function renderQuiz(){
 
 function finish(){
   const n=S.qs.length, ok=S.res.slice(0,n).filter(r=>r&&r.ok).length;
+  if(S.mode==="review"){S.screen="result";render();return;}
   const st=load("chu1-stats2",{}), key=S.subj.id+"-"+S.term, cur=st[key]||{n:0,ok:0};
   cur.n+=n; cur.ok+=ok; st[key]=cur; save("chu1-stats2",st);
   S.screen="result"; render();
@@ -535,12 +570,13 @@ function renderResult(){
   const wrong=S.qs.filter((q,i)=>!(S.res[i]&&S.res[i].ok));
   app.innerHTML=`
     <div class="panel top" style="text-align:center">
-      <h2>${S.subj.name}の結果</h2>
+      <h2>${S.subj.name}の${S.mode==="review"?"復習の":""}結果</h2>
       <div class="big">${ok}<span style="font-size:1.4rem"> / ${n}</span></div>
+      ${S.mode==="review"?`<p class="hint" style="margin:6px 0">復習リストから消えた問題：${S.res.filter(r=>r&&r.rv==="cleared").length}問／残り：${rvList(S.subj.id,S.term).length}問</p>`:(wrong.length?`<p class="hint" style="margin:6px 0">まちがえた ${wrong.length} 問を復習リストに追加しました。</p>`:"")}
       <p class="lead" style="margin:0">${ok===n?"全問正解！この調子です。":ok>=n*0.8?"よくできました。まちがえた問題を見直そう。":"まちがえた問題の解説を読んで、もう一度チャレンジしよう。"}</p>
     </div>
     ${wrong.length?`<button class="btn" id="retry">まちがえた ${wrong.length} 問だけもう一度</button>`:""}
-    <button class="btn ${wrong.length?"ghost":""}" id="again">もう一回（新しくシャッフル）</button>
+    <button class="btn ${wrong.length?"ghost":""}" id="again">${S.mode==="review"?(rvList(S.subj.id,S.term).length?"残りの復習をもう一回":"設定画面にもどる"):"もう一回（新しくシャッフル）"}</button>
     <button class="btn ghost" id="home">教科えらびにもどる</button>
     <div class="panel">
       <h2>ふりかえり</h2>
@@ -553,7 +589,7 @@ function renderResult(){
     </div>`;
   const rb=document.getElementById("retry");
   if(rb) rb.onclick=()=>{S.qs=shuffle(wrong).map(prep);S.idx=0;S.res=[];S.pad={ans:{idx:-1,data:null},memo:{idx:-1,data:null}};S.screen="quiz";render();};
-  document.getElementById("again").onclick=()=>{S.pad={ans:{idx:-1,data:null},memo:{idx:-1,data:null}};start();};
+  document.getElementById("again").onclick=()=>{S.pad={ans:{idx:-1,data:null},memo:{idx:-1,data:null}}; if(S.mode==="review"){if(rvList(S.subj.id,S.term).length)startReview();else{S.screen="setup";render();}} else start();};
   document.getElementById("home").onclick=()=>{S.subj=null;S.screen="home";render();};
 }
 
